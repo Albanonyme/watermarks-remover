@@ -66,6 +66,17 @@ class ContainerInspectReport:
     findings: list[str] = field(default_factory=list)
     tools: dict[str, Any] = field(default_factory=dict)
     details: dict[str, Any] = field(default_factory=dict)
+    # Layer A body scan for text-bearing containers (md/html); None when not applicable.
+    text_marks: dict[str, Any] | None = None
+
+    @property
+    def has_text_marks(self) -> bool:
+        return bool(self.text_marks and self.text_marks.get("suspicious_total"))
+
+    @property
+    def is_dirty(self) -> bool:
+        """True when anything this tool would strip is present."""
+        return self.has_c2pa or self.has_ai_metadata or self.has_text_marks
 
     def to_dict(self) -> dict:
         return {
@@ -73,9 +84,11 @@ class ContainerInspectReport:
             "format": self.format,
             "has_c2pa": self.has_c2pa,
             "has_ai_metadata": self.has_ai_metadata,
+            "has_text_marks": self.has_text_marks,
             "findings": self.findings,
             "tools": self.tools,
             "details": self.details,
+            "text_marks": self.text_marks,
         }
 
 
@@ -649,11 +662,14 @@ def clean_pdf(path: Path, dest: Path) -> tuple[list[str], dict]:
 # Unified API
 # ---------------------------------------------------------------------------
 
-def inspect_container(path: Path) -> ContainerInspectReport:
+def inspect_container(path: Path, *, aggressive: bool = False) -> ContainerInspectReport:
+    from text_unicode import inspect_text  # local import to avoid cycles
+
     data = path.read_bytes()
     fmt = detect_container_format(path, data)
     tools: dict[str, Any] = {}
     details: dict[str, Any] = {}
+    text_marks: dict[str, Any] | None = None
 
     if fmt == "svg":
         has_c2pa, has_ai, findings, details = inspect_svg(data)
@@ -673,6 +689,15 @@ def inspect_container(path: Path) -> ContainerInspectReport:
     else:
         has_c2pa, has_ai, findings = False, False, [f"unsupported container: {fmt}"]
 
+    # Layer A body scan: clean_container() scrubs invisible Unicode from md/html,
+    # so inspect must report it too or the two disagree (a "clean" report on a
+    # file that clean_file.py would still change).
+    if fmt in ("html", "markdown"):
+        report = inspect_text(data.decode("utf-8", errors="replace"), aggressive=aggressive)
+        text_marks = report.to_dict()
+        for hit in report.hits:
+            findings.append(f"layer A text: {hit.label} x{hit.count} [{hit.kind}]")
+
     if fmt in ("svg", "pdf", "docx") and not tools:
         tools = run_optional_tools(path)
 
@@ -684,6 +709,7 @@ def inspect_container(path: Path) -> ContainerInspectReport:
         findings=findings,
         tools=tools,
         details=details,
+        text_marks=text_marks,
     )
 
 
@@ -749,6 +775,7 @@ def clean_container(
         "bytes_out": dest.stat().st_size,
         "still_has_c2pa": after.has_c2pa,
         "still_has_ai_metadata": after.has_ai_metadata,
+        "still_has_text_marks": after.has_text_marks,
         "post_findings": after.findings,
         "meta": meta,
     }

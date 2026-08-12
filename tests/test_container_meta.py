@@ -207,3 +207,57 @@ def test_pdf_degraded_clean_without_crash(tmp_path: Path):
     assert dest.is_file()
     assert actions
     assert meta.get("mode") in ("exiftool", "stdlib-xmp", "copy")
+
+
+def test_inspect_reports_layer_a_marks_in_markdown_body(tmp_path):
+    """inspect must flag body Unicode that clean_container would strip.
+
+    Regression: the container branch only looked at frontmatter, so a file with
+    no AI metadata but invisible carriers in the body reported clean while
+    clean_file.py still modified it.
+    """
+    src = tmp_path / "sneaky.md"
+    src.write_text("# Title\n\nhidden​ marks and a‌ joiner.\n", encoding="utf-8")
+
+    report = inspect_container(src)
+    assert report.has_ai_metadata is False
+    assert report.has_text_marks is True
+    assert report.is_dirty is True
+    assert report.text_marks["suspicious_total"] == 2
+    assert any("layer A text" in f for f in report.findings)
+
+
+def test_inspect_and_clean_agree_on_markdown(tmp_path):
+    """After cleaning, inspect must report the file as not dirty."""
+    src = tmp_path / "sneaky.md"
+    src.write_text("# Title\n\nhidden​ marks.\n", encoding="utf-8")
+    dest = tmp_path / "sneaky.cleaned.md"
+
+    result = clean_container(src, dest)
+    assert result["still_has_text_marks"] is False
+    assert inspect_container(dest).is_dirty is False
+
+
+def test_inspect_reports_layer_a_marks_in_html_body(tmp_path):
+    src = tmp_path / "page.html"
+    src.write_text("<html><body><p>hi​there</p></body></html>", encoding="utf-8")
+
+    report = inspect_container(src)
+    assert report.has_text_marks is True
+    assert report.is_dirty is True
+
+
+def test_clean_container_still_has_text_marks_key(tmp_path):
+    src = tmp_path / "plain.md"
+    src.write_text("# Title\n\nnothing hidden here.\n", encoding="utf-8")
+    result = clean_container(src, tmp_path / "out.md")
+    assert result["still_has_text_marks"] is False
+
+
+def test_non_text_container_has_no_text_marks(tmp_path):
+    """SVG/PDF/DOCX are not body-scanned; text_marks stays None."""
+    src = tmp_path / "a.svg"
+    src.write_text('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', encoding="utf-8")
+    report = inspect_container(src)
+    assert report.text_marks is None
+    assert report.has_text_marks is False

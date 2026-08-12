@@ -81,7 +81,7 @@ def main() -> int:
                 print(f"  - {f}")
         return 0 if not (report.has_c2pa or report.has_ai_metadata) else 1
 
-    report = inspect_container(args.path)
+    report = inspect_container(args.path, aggressive=args.aggressive)
     if args.json:
         emit_json({"kind": "container", **report.to_dict()})
     else:
@@ -90,9 +90,11 @@ def main() -> int:
         print(f"Format: {report.format}")
         print(f"C2PA: {report.has_c2pa}")
         print(f"AI metadata: {report.has_ai_metadata}")
+        if report.text_marks is not None:
+            print(f"Layer A text marks: {report.text_marks['suspicious_total']}")
         for f in report.findings:
             print(f"  - {f}")
-    return 0 if not (report.has_c2pa or report.has_ai_metadata) else 1
+    return 0 if not report.is_dirty else 1
 
 
 if __name__ == "__main__":
